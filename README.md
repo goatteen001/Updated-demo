@@ -63,3 +63,4 @@ RPC: `get_daily_engagement`.
 **AI:** `source .venv/bin/activate && cd ai-service && uvicorn main:app --reload --host 0.0.0.0 --port 8001`
 
 **Key APIs:** `/api/telemetry`, `/api/interactions`, `/api/recommendations/:user_id`
+"# Updated-demo" 

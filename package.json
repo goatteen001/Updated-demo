@@ -1,0 +1,19 @@
+{
+  "name": "dataflow-ai",
+  "version": "1.0.0",
+  "description": "Monorepo for client, server, and ai-service",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "scripts": {
+    "dev": "concurrently --names \"CLIENT,SERVER,AI\" --prefix-colors \"blue,green,yellow\" \"npm run dev:client\" \"npm run dev:server\" \"npm run dev:ai\"",
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "dev:ai": "cd ai-service && source venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8001 --reload",
+    "install:js": "npm install && cd client && npm install && cd ../server && npm install",
+    "install:all": "npm install && cd client && npm install && cd ../server && npm install && cd ../ai-service && python3 -m venv venv && . venv/bin/activate && pip install -r requirements.txt"
+  },
+  "dependencies": {
+    "all": "^0.0.0"
+  }
+}

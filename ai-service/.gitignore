@@ -1,0 +1,41 @@
+# AI Service .gitignore (Python/FastAPI)
+
+# Byte-compiled / C Extensions
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenvs
+venv/
+env/
+ENV/
+
+# Environment
+.env
+.env.local
+
+# Pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Runtime
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Temp
+*.tmp
+

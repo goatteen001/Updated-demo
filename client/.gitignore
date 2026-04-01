@@ -1,0 +1,40 @@
+# Client .gitignore (Vite/React)
+
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Production build
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+
+# Vite
+.cache/
+.vite/
+
+# VSCode
+.vscode/
+!.vscode/settings.json
+
+# OS
+.DS_Store
+
+# Playwright (tests)
+playwright-report/
+test-results/
+
+# ESLint
+.eslintcache
+
+# TypeScript
+tsconfig.tsbuildinfo
+

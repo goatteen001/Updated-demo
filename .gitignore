@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment Variables
+.env
+.env.*
+
+# Build outputs
+build/
+dist/
+.next/
+
+# Python
+__pycache__/
+venv/
+.venv/
+*.pyc
+
+# Mac
+.DS_Store
