@@ -1,11 +1,14 @@
 import { useCourses, useUserProgress, useUserQuizAttempts } from "@/hooks/useSupabaseQuery";
 import { Card, CardContent } from "@/components/ui/card";
-import { Brain, BookOpen, Clock, ArrowRight, Loader2, Sparkles, PlayCircle, Code } from "lucide-react";
+import { Brain, BookOpen, Clock, ArrowRight, Loader2, Sparkles, ExternalLink, Youtube, FileText, GraduationCap, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
 import { fetchCourseProgressAPI } from "@/hooks/useProgressTracking";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface CourseAIData {
   courseId: string;
@@ -16,12 +19,92 @@ interface CourseAIData {
   totalMaterials: number;
 }
 
+interface RAGRecommendation {
+  title: string;
+  url: string;
+  source: string;
+  reason: string;
+  difficulty: string;
+  // Legacy fields (may be present from fallback)
+  material_id?: string;
+}
+
+interface RAGResponse {
+  recommendations: RAGRecommendation[];
+  metadata: {
+    user_level: string;
+    weak_topics: string[];
+    generation_method: string;
+    elapsed_seconds: number;
+    candidates_retrieved: number;
+    content_type_preference: string | null;
+    [key: string]: any;
+  };
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const AI_SERVICE_URL = "http://localhost:8001";
+
+// ─── Helper Components ───────────────────────────────────────────────────────
+
+function SourceIcon({ source }: { source: string }) {
+  switch (source?.toLowerCase()) {
+    case "youtube":
+      return <Youtube className="h-4 w-4" />;
+    case "documentation":
+      return <FileText className="h-4 w-4" />;
+    case "freecodecamp":
+      return <GraduationCap className="h-4 w-4" />;
+    default:
+      return <ExternalLink className="h-4 w-4" />;
+  }
+}
+
+function DifficultyBadge({ level }: { level: string }) {
+  const colors: Record<string, string> = {
+    beginner: "text-emerald-400 bg-emerald-500/15 border-emerald-500/30",
+    intermediate: "text-amber-400 bg-amber-500/15 border-amber-500/30",
+    advanced: "text-rose-400 bg-rose-500/15 border-rose-500/30",
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${colors[level] || colors.beginner}`}
+    >
+      {level.charAt(0).toUpperCase() + level.slice(1)}
+    </span>
+  );
+}
+
+function SourceBadge({ source }: { source: string }) {
+  const colors: Record<string, string> = {
+    youtube: "text-red-400 bg-red-500/10 border-red-500/20",
+    documentation: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+    freecodecamp: "text-green-400 bg-green-500/10 border-green-500/20",
+    blog: "text-purple-400 bg-purple-500/10 border-purple-500/20",
+  };
+  const color = colors[source?.toLowerCase()] || "text-muted-foreground bg-muted/50 border-border";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${color}`}>
+      <SourceIcon source={source} />
+      {source}
+    </span>
+  );
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
 export default function Recommendations() {
   const { user } = useAuth();
   const { data: courses = [], isLoading: loadingCourses } = useCourses();
   const { data: progressData = [] } = useUserProgress();
   const { data: attempts = [] } = useUserQuizAttempts();
   const [courseAIData, setCourseAIData] = useState<CourseAIData[]>([]);
+
+  // RAG recommendations state
+  const [ragData, setRagData] = useState<RAGResponse | null>(null);
+  const [ragLoading, setRagLoading] = useState(false);
+  const [ragError, setRagError] = useState<string | null>(null);
 
   // Fetch progress-based AI data for each active course
   useEffect(() => {
@@ -52,6 +135,45 @@ export default function Recommendations() {
 
     fetchAll();
   }, [user?.id, progressData]);
+
+  // Fetch RAG recommendations from AI service
+  const fetchRAGRecommendations = async () => {
+    if (!user?.id) return;
+
+    setRagLoading(true);
+    setRagError(null);
+
+    try {
+      const response = await fetch(`${AI_SERVICE_URL}/recommend/rag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`AI service returned ${response.status}`);
+      }
+
+      const data: RAGResponse = await response.json();
+      setRagData(data);
+    } catch (err: any) {
+      console.error("[RAG] Failed to fetch recommendations:", err);
+      setRagError(
+        err.message?.includes("Failed to fetch")
+          ? "AI service is not running. Start it with: npm run dev"
+          : err.message || "Failed to load recommendations"
+      );
+    } finally {
+      setRagLoading(false);
+    }
+  };
+
+  // Auto-fetch RAG recommendations on mount
+  useEffect(() => {
+    if (user?.id) {
+      fetchRAGRecommendations();
+    }
+  }, [user?.id]);
 
   // Build a set of course IDs with low quiz scores (< 70%) as high-priority recs
   const lowScoreCourseIds = new Set(
@@ -121,52 +243,169 @@ export default function Recommendations() {
         </Card>
       )}
 
+      {/* ─── RAG External Recommendations Section ─── */}
+      <Card className="border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-fuchsia-500/5">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-violet-400" />
+              <h2 className="font-bold font-display text-base">AI-Recommended Resources</h2>
+              {ragData?.metadata?.generation_method && (
+                <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground border-border/40">
+                  {ragData.metadata.generation_method === "llm" ? "GPT-4o" : "AI Engine"}
+                </Badge>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchRAGRecommendations}
+              disabled={ragLoading}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${ragLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            External videos, tutorials, and documentation curated by AI based on your progress and weak areas.
+          </p>
+
+          {ragLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-violet-400" />
+              <span className="ml-2 text-sm text-muted-foreground">Analyzing your learning data...</span>
+            </div>
+          )}
+
+          {ragError && (
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-400">
+              <p className="font-medium">Could not load recommendations</p>
+              <p className="text-xs mt-1 text-red-400/70">{ragError}</p>
+            </div>
+          )}
+
+          {!ragLoading && !ragError && ragData && ragData.recommendations.length === 0 && (
+            <div className="text-center py-6">
+              <p className="text-sm text-muted-foreground">
+                🎉 You're all caught up! Complete more materials and quizzes to get personalized recommendations.
+              </p>
+            </div>
+          )}
+
+          {!ragLoading && !ragError && ragData && ragData.recommendations.length > 0 && (
+            <div className="grid gap-3">
+              {ragData.recommendations.map((rec, idx) => (
+                <a
+                  key={idx}
+                  href={rec.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group rounded-xl border border-border/60 bg-card/80 p-4 flex flex-col sm:flex-row sm:items-center gap-3 transition-all hover:border-violet-500/40 hover:shadow-md hover:bg-card"
+                >
+                  {/* Icon + Source */}
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 flex-shrink-0">
+                    <SourceIcon source={rec.source} />
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-sm group-hover:text-violet-400 transition-colors truncate">
+                        {rec.title}
+                      </h3>
+                      <ExternalLink className="h-3 w-3 text-muted-foreground flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                      {rec.reason}
+                    </p>
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <SourceBadge source={rec.source} />
+                      <DifficultyBadge level={rec.difficulty} />
+                    </div>
+                  </div>
+
+                  {/* Arrow */}
+                  <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0 group-hover:text-violet-400 group-hover:translate-x-0.5 transition-all hidden sm:block" />
+                </a>
+              ))}
+            </div>
+          )}
+
+          {/* Metadata footer */}
+          {ragData?.metadata && (
+            <div className="flex items-center gap-3 pt-2 border-t border-border/30">
+              {ragData.metadata.user_level && (
+                <span className="text-[10px] text-muted-foreground">
+                  Level: <DifficultyBadge level={ragData.metadata.user_level} />
+                </span>
+              )}
+              {ragData.metadata.weak_topics && ragData.metadata.weak_topics.length > 0 && (
+                <span className="text-[10px] text-muted-foreground">
+                  Focus: {ragData.metadata.weak_topics.slice(0, 2).join(", ")}
+                </span>
+              )}
+              <span className="text-[10px] text-muted-foreground ml-auto">
+                {ragData.metadata.elapsed_seconds?.toFixed(1)}s
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* How It Works */}
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="flex items-start gap-3 p-4">
           <Brain className="h-5 w-5 text-primary mt-0.5" />
           <div className="text-sm">
             <p className="font-semibold">How recommendations work</p>
             <p className="text-muted-foreground mt-1">
-              The AI analyzes your quiz performance and course progress to surface the most relevant courses.
-              Courses with low quiz scores are prioritized so you can revisit and improve.
+              The AI analyzes your quiz performance, course progress, and learning behavior to find your weak areas.
+              It then uses vector similarity search to identify relevant topics and recommends external resources
+              (YouTube videos, documentation, free courses) to help you improve.
             </p>
           </div>
         </CardContent>
       </Card>
 
-      {loadingCourses ? (
-        <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {recommended.map((course) => (
-            <Link key={course.id} to={`/courses/${course.id}`} className="group block">
-              <div className="rounded-2xl border border-border/60 bg-card p-5 h-full flex flex-col gap-3 card-hover">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary flex-shrink-0">
-                    <BookOpen className="h-5 w-5" />
+      {/* Course-Based Recommendations */}
+      <div>
+        <h2 className="text-lg font-bold font-display mb-3">Courses for You</h2>
+        {loadingCourses ? (
+          <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {recommended.map((course) => (
+              <Link key={course.id} to={`/courses/${course.id}`} className="group block">
+                <div className="rounded-2xl border border-border/60 bg-card p-5 h-full flex flex-col gap-3 card-hover">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary flex-shrink-0">
+                      <BookOpen className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-sm group-hover:text-primary transition-colors leading-tight">{course.title}</h3>
+                      <Badge variant="secondary" className="text-xs mt-1">{course.category}</Badge>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-sm group-hover:text-primary transition-colors leading-tight">{course.title}</h3>
-                    <Badge variant="secondary" className="text-xs mt-1">{course.category}</Badge>
+                  <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{course.description}</p>
+                  <div className="mt-auto flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" />{course.duration_minutes}m
+                    </span>
+                    <span className="text-xs text-primary font-medium flex items-center gap-1">
+                      View course <ArrowRight className="h-3 w-3" />
+                    </span>
                   </div>
+                  <p className="text-[11px] text-muted-foreground italic border-t border-border/40 pt-2">
+                    💡 {getReason(course)}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{course.description}</p>
-                <div className="mt-auto flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" />{course.estimated_minutes}m
-                  </span>
-                  <span className="text-xs text-primary font-medium flex items-center gap-1">
-                    View course <ArrowRight className="h-3 w-3" />
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground italic border-t border-border/40 pt-2">
-                  💡 {getReason(course)}
-                </p>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

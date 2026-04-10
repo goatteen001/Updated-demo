@@ -1,4 +1,4 @@
-import { LayoutDashboard, BookOpen, GraduationCap, ClipboardList, Sparkles, LogOut, Brain, FileStack } from "lucide-react";
+import { LayoutDashboard, BookOpen, GraduationCap, ClipboardList, Sparkles, LogOut, Brain, FileStack, Zap } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import {
@@ -18,6 +18,7 @@ const items = [
   { title: "Dashboard",      url: "/dashboard",      icon: LayoutDashboard },
   { title: "Courses",        url: "/courses",        icon: BookOpen         },
   { title: "Quizzes",        url: "/quizzes",        icon: ClipboardList    },
+  { title: "Practice Quiz",  url: "/practice",       icon: Zap              },
   { title: "Past Questions", url: "/past-questions", icon: FileStack        },
   { title: "Recommendations",url: "/recommendations",icon: Sparkles         },
   { title: "My Progress",    url: "/progress",       icon: GraduationCap   },

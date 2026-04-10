@@ -27,6 +27,7 @@ import QuizResult from "./pages/student/QuizResult";
 import Recommendations from "./pages/student/Recommendations";
 import Progress from "./pages/student/Progress";
 import PastQuestions from "./pages/student/PastQuestions";
+import PracticeQuiz from "./pages/student/PracticeQuiz";
 
 // Admin pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -61,6 +62,7 @@ const App = () => (
                 <Route path="/quizzes" element={<QuizList />} />
                 <Route path="/quizzes/:quizId" element={<QuizPage />} />
                 <Route path="/quizzes/:quizId/result" element={<QuizResult />} />
+                <Route path="/practice" element={<PracticeQuiz />} />
                 <Route path="/recommendations" element={<Recommendations />} />
                 <Route path="/progress" element={<Progress />} />
                 <Route path="/past-questions" element={<PastQuestions />} />

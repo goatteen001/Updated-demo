@@ -2,3 +2,7 @@ fastapi
 uvicorn
 supabase
 python-dotenv
+faiss-cpu
+numpy
+openai
+scikit-learn
