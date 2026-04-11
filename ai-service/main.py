@@ -294,14 +294,16 @@ async def generate_quiz(payload: QuizGenerateRequest):
     material_list = ", ".join(m["title"] for m in materials) if materials else "general course content"
     metadata["material_count"] = len(materials)
 
-    # 2. Try LLM generation
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    # 2. Try LLM generation via Google Gemini (free tier)
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     questions = None
 
     if api_key:
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=api_key)
+            from google import genai
+            from google.genai import types as genai_types
+
+            client = genai.Client(api_key=api_key)
 
             prompt = f"""Generate exactly {payload.num_questions} multiple-choice quiz questions for a {payload.difficulty}-level student.
 
@@ -331,24 +333,27 @@ You MUST respond with ONLY valid JSON in this exact format:
   ]
 }}"""
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a quiz generator API. Generate educational multiple-choice questions. Respond with valid JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.8,
-                max_tokens=2000,
-                response_format={"type": "json_object"},
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction="You are a quiz generator API. Generate educational multiple-choice questions. Respond with valid JSON only, no markdown code fences.",
+                    temperature=0.8,
+                    max_output_tokens=2000,
+                    response_mime_type="application/json",
+                ),
             )
 
-            raw = response.choices[0].message.content.strip()
+            raw = response.text.strip()
+            # Strip markdown fences if model wraps response anyway
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             parsed = json.loads(raw)
             questions = parsed.get("questions", [])
-            metadata["generation_method"] = "llm"
+            metadata["generation_method"] = "llm_gemini"
 
         except Exception as e:
-            print(f"[QuizGen] OpenAI error: {e}")
+            print(f"[QuizGen] Gemini error: {e}")
             questions = None
 
     # 3. Fallback to curated questions

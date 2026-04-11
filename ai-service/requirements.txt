@@ -4,5 +4,5 @@ supabase
 python-dotenv
 faiss-cpu
 numpy
-openai
+google-genai
 scikit-learn
