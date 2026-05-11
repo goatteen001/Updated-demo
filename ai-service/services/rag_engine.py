@@ -3,16 +3,15 @@ RAG Recommendation Engine for DataFlow AI
 ==========================================
 Production-ready Retrieval-Augmented Generation pipeline that:
 1. Retrieves user progress, quiz scores, and telemetry from Supabase
-2. Embeds all course materials using OpenAI embeddings (primary) or TF-IDF (fallback)
+2. Embeds all course materials using TF-IDF (offline, no API key needed)
 3. Identifies weak areas from quiz performance and incomplete materials
 4. Retrieves top-k relevant materials via FAISS cosine similarity
-5. Generates personalized recommendations via OpenAI LLM (with rule-based fallback)
+5. Generates personalized recommendations via OpenAI GPT-4o-mini (with rule-based fallback)
 
 Embedding Strategy:
-  - Primary: OpenAI text-embedding-3-small (1536-dim) — requires OPENAI_API_KEY
-  - Fallback: TF-IDF from scikit-learn — works offline, no API key needed
-
-Both paths feed into the same FAISS index for retrieval.
+  - Embeddings: TF-IDF from scikit-learn — works offline, no API key needed
+  - LLM Generation: OpenAI GPT-4o-mini — requires OPENAI_API_KEY in .env
+  - Response Cache: per-user TTL cache (30 min) to avoid redundant API calls
 """
 
 import os
@@ -40,6 +39,8 @@ TFIDF_MAX_FEATURES = 512                            # TF-IDF fallback dimensiona
 TOP_K_RETRIEVAL = 5                                  # Max candidates to retrieve
 WEAK_SCORE_THRESHOLD = 60                            # Quiz score % below this = weak
 MAX_RECOMMENDATIONS = 3                              # Final recommendations to return
+RAG_CACHE_TTL_SECONDS = 1800                         # Cache per-user results for 30 min
+OPENAI_LLM_MODEL = "gpt-4o-mini"                    # Model used for recommendation generation
 
 
 # ─── Data Models ──────────────────────────────────────────────────────────────
@@ -291,6 +292,11 @@ class EmbeddingCache:
 
 # Global singleton instance
 _cache = EmbeddingCache()
+
+# ─── Per-User Response Cache ──────────────────────────────────────────────────
+# Stores (result_dict, expiry_timestamp) keyed by user_id.
+# Prevents repeated Gemini calls when the client polls the endpoint rapidly.
+_response_cache: Dict[str, tuple] = {}
 
 
 # ─── Data Loading ─────────────────────────────────────────────────────────────
@@ -702,6 +708,7 @@ def generate_recommendations_llm(context: RAGContext) -> Optional[Dict[str, Any]
     """
     Call OpenAI GPT-4o-mini to generate external resource recommendations.
     Returns parsed JSON or None if the LLM is unavailable.
+    Requires OPENAI_API_KEY to be set in ai-service/.env.
     """
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -711,14 +718,13 @@ def generate_recommendations_llm(context: RAGContext) -> Optional[Dict[str, Any]
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
-
         prompt = _build_prompt(context)
 
-        logger.info("Calling OpenAI GPT-4o-mini for external resource recommendations...")
+        logger.info(f"Calling OpenAI {OPENAI_LLM_MODEL} for recommendations...")
         t0 = time.time()
 
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=OPENAI_LLM_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -726,29 +732,28 @@ def generate_recommendations_llm(context: RAGContext) -> Optional[Dict[str, Any]
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.7,       # Slightly higher for diverse recommendations
+            temperature=0.7,
             max_tokens=1000,
             response_format={"type": "json_object"},
         )
 
         raw = response.choices[0].message.content.strip()
         elapsed = time.time() - t0
-        logger.info(f"LLM response received in {elapsed:.2f}s ({len(raw)} chars)")
+        logger.info(f"OpenAI response received in {elapsed:.2f}s ({len(raw)} chars)")
 
         result = json.loads(raw)
 
-        # Validate structure
         if "recommendations" not in result:
-            logger.warning("LLM response missing 'recommendations' key")
+            logger.warning("OpenAI response missing 'recommendations' key")
             return None
 
         return result
 
     except ImportError:
-        logger.warning("openai package not installed")
+        logger.warning("openai package not installed — run: pip install openai")
         return None
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse LLM JSON response: {e}")
+        logger.error(f"Failed to parse OpenAI JSON response: {e}")
         return None
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
@@ -984,6 +989,18 @@ def get_rag_recommendations(supabase, user_id: str) -> Dict[str, Any]:
     t_start = time.time()
     metadata: Dict[str, Any] = {"user_id": user_id, "pipeline": "rag"}
 
+    # ── Cache check: return cached result if still fresh ──
+    cached = _response_cache.get(user_id)
+    if cached is not None:
+        result_dict, expiry = cached
+        if time.time() < expiry:
+            remaining = int(expiry - time.time())
+            logger.info(f"Cache HIT for user={user_id[:8]}... (expires in {remaining}s)")
+            return result_dict
+        else:
+            # Expired — evict
+            del _response_cache[user_id]
+
     # ── Step 1: Ensure embeddings are built (lazy init on first request) ──
     if not _cache.is_ready:
         logger.info("First request — building embedding index...")
@@ -1044,12 +1061,12 @@ def get_rag_recommendations(supabase, user_id: str) -> Dict[str, Any]:
     # ── Step 6: Generate recommendations (LLM → fallback) ──
     result = generate_recommendations_llm(context)
     if result is not None:
-        metadata["generation_method"] = "llm"
+        metadata["generation_method"] = "llm_openai"
     else:
         result = generate_recommendations_fallback(context)
         metadata["generation_method"] = "rule_based_fallback"
 
-    # ── Step 7: Return structured response ──
+    # ── Step 7: Build, cache, and return structured response ──
     elapsed = time.time() - t_start
     metadata["elapsed_seconds"] = round(elapsed, 3)
 
@@ -1059,7 +1076,13 @@ def get_rag_recommendations(supabase, user_id: str) -> Dict[str, Any]:
         f"recs={len(result.get('recommendations', []))}"
     )
 
-    return {
+    final_response = {
         "recommendations": result.get("recommendations", []),
         "metadata": metadata,
     }
+
+    # Store in per-user cache (only cache successful LLM or fallback results)
+    _response_cache[user_id] = (final_response, time.time() + RAG_CACHE_TTL_SECONDS)
+    logger.info(f"Cached result for user={user_id[:8]}... (TTL={RAG_CACHE_TTL_SECONDS}s)")
+
+    return final_response

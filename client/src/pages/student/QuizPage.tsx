@@ -22,7 +22,7 @@ export default function QuizPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
-  const { data: quiz, isLoading } = useQuiz(quizId);
+  const { data: quiz, isLoading, isError } = useQuiz(quizId);
   const saveAttempt = useSaveQuizAttempt();
 
   const [startTime, setStartTime] = useState<number>(Date.now());
@@ -108,10 +108,14 @@ export default function QuizPage() {
     );
   }
 
-  if (!quiz) {
+  if (isError || !quiz) {
     return (
       <div className="text-center py-20">
         <h2 className="text-2xl font-bold font-display">Quiz not found</h2>
+        <p className="text-muted-foreground mt-2">
+          This quiz could not be loaded. It may not exist or there was a
+          connection issue.
+        </p>
         <Button asChild className="mt-4">
           <Link to="/courses">Back to Courses</Link>
         </Button>
@@ -172,7 +176,32 @@ export default function QuizPage() {
     );
   }
 
-  if (randomizedQuestions.length === 0) return null;
+  // Questions are set by a useEffect — show spinner while they initialise.
+  // If they're still empty after the quiz has loaded, show an error message.
+  if (randomizedQuestions.length === 0) {
+    // Effect hasn't run yet (will run on next render after quiz load)
+    // We rely on React's re-render cycle — if quiz is set but questions are
+    // still empty it means the quiz has no questions in the database.
+    const hasNoQuestions = quiz && (!quiz.questions || (quiz.questions as any[]).length === 0);
+    if (hasNoQuestions) {
+      return (
+        <div className="text-center py-20">
+          <h2 className="text-2xl font-bold font-display">No Questions Available</h2>
+          <p className="text-muted-foreground mt-2">
+            This quiz doesn't have any questions yet.
+          </p>
+          <Button asChild className="mt-4">
+            <Link to={`/courses/${quiz.course_id}`}>Back to Course</Link>
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex justify-center py-32">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   // ─── Question variables ────────────────────────────────────────────────────
   const question = randomizedQuestions[currentQ];

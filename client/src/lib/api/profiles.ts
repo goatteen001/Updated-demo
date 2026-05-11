@@ -82,6 +82,51 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
       return cached;
     }
 
+    // ── Fast path: build profile from the JWT session (no DB query needed) ──
+    // This bypasses the 42P17 infinite recursion RLS bug on the profiles table.
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (session?.user && session.user.id === userId) {
+      const u = session.user;
+      const meta = u.user_metadata ?? {};
+      const appMeta = u.app_metadata ?? {};
+
+      // Role can live in app_metadata (set server-side) or user_metadata (set on signup)
+      const role: "student" | "admin" =
+        appMeta.role === "admin" || meta.role === "admin" ? "admin" : "student";
+
+      const jwtProfile: Profile = {
+        id: u.id,
+        email: u.email ?? "",
+        full_name: meta.full_name ?? meta.name ?? null,
+        role,
+        created_at: u.created_at ?? new Date().toISOString(),
+      };
+
+      // Cache the JWT-derived profile briefly so we don't rebuild it every render
+      await CacheManager.set(`profile_${userId}`, jwtProfile, 2 * 60 * 1000);
+      console.log("[Profile] Built from JWT session (bypassed profiles table)");
+
+      // Attempt a real DB fetch in the background to get accurate role/name
+      // but don't await it — if it fails with 42P17 we silently ignore it.
+      supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single()
+        .then(({ data, error }) => {
+          if (!error && data) {
+            CacheManager.set(`profile_${userId}`, data as Profile, 5 * 60 * 1000);
+          }
+          // Silently swallow 42P17 (infinite recursion in RLS policy)
+        });
+
+      return jwtProfile;
+    }
+
+    // ── Fallback: direct DB query if no session available ──
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
@@ -89,6 +134,11 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
       .single() as { data: Profile | null; error: any };
 
     if (error) {
+      // 42P17 = infinite recursion in RLS policy — return null gracefully
+      if (error.code === "42P17") {
+        console.warn("[Profile] RLS infinite recursion detected – profile unavailable until fixed in Supabase dashboard.");
+        return null;
+      }
       console.error("[Profile] Fetch error:", error);
       return null;
     }
@@ -104,6 +154,7 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
     return null;
   }
 }
+
 
 export async function updateProfile(
   userId: string,

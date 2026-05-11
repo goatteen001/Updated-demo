@@ -3,36 +3,83 @@
 
 import { supabase } from "@/lib/supabase";
 
+// ─── Helper: fetch questions for one or more quiz IDs ─────────────────────────
+// Using separate queries instead of PostgREST join syntax (questions(*))
+// because the join requires a foreign key constraint in Supabase which may
+// not be set up — a 500 error is returned when it's missing.
+
+async function fetchQuestionsForQuiz(quizId: string) {
+  const { data, error } = await supabase
+    .from("questions")
+    .select("*")
+    .eq("quizzes_id", quizId);
+
+  if (error) {
+    console.warn("[Quizzes] Could not load questions for quiz", quizId, error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
+async function fetchQuestionsForQuizzes(quizIds: string[]) {
+  if (quizIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("questions")
+    .select("*")
+    .in("quizzes_id", quizIds);
+
+  if (error) {
+    console.warn("[Quizzes] Could not load questions batch:", error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 export async function fetchQuizzes() {
   const { data, error } = await supabase
     .from("quizzes")
-    .select("*, questions(*)")
+    .select("*")
     .order("created_at", { ascending: true });
 
   if (error) throw error;
-  return data ?? [];
+  const quizzes = data ?? [];
+
+  // Attach questions to each quiz
+  const questions = await fetchQuestionsForQuizzes(quizzes.map((q) => q.id));
+  return quizzes.map((quiz) => ({
+    ...quiz,
+    questions: questions.filter((q: any) => q.quiz_id === quiz.id),
+  }));
 }
 
 export async function fetchQuizById(quizId: string) {
   const { data, error } = await supabase
     .from("quizzes")
-    .select("*, questions(*)")
+    .select("*")
     .eq("id", quizId)
     .single();
 
   if (error) throw error;
-  return data;
+  if (!data) return null;
+
+  const questions = await fetchQuestionsForQuiz(quizId);
+  return { ...data, questions };
 }
 
 export async function fetchQuizByCourseId(courseId: string) {
   const { data, error } = await supabase
     .from("quizzes")
-    .select("*, questions(*)")
+    .select("*")
     .eq("course_id", courseId)
     .single();
 
   if (error) throw error;
-  return data;
+  if (!data) return null;
+
+  const questions = await fetchQuestionsForQuiz(data.id);
+  return { ...data, questions };
 }
 
 export async function saveQuizAttempt(attempt: {
@@ -44,7 +91,7 @@ export async function saveQuizAttempt(attempt: {
 }) {
   const { data, error } = await supabase
     .from("quiz_attempts")
-    // Tell TS to trust us on the shape of this insert 
+    // Tell TS to trust us on the shape of this insert
     // since the DB will auto-generate 'id' and 'created_at'
     .insert(attempt as any)
     .select()
@@ -55,13 +102,27 @@ export async function saveQuizAttempt(attempt: {
 }
 
 export async function fetchUserQuizAttempts(userId: string) {
-  const { data, error } = await supabase
+  // Fetch attempts first
+  const { data: attempts, error } = await supabase
     .from("quiz_attempts")
-    // Cast the deeply nested select string to 'any' to prevent TS parsing errors
-    .select("*, quizzes(title, course_id, courses(title))" as any)
+    .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return data ?? [];
+  if (!attempts || attempts.length === 0) return [];
+
+  // Fetch related quizzes separately to avoid join issues
+  const quizIds = [...new Set(attempts.map((a: any) => a.quiz_id))];
+  const { data: quizzes } = await supabase
+    .from("quizzes")
+    .select("id, title, course_id")
+    .in("id", quizIds);
+
+  const quizMap = Object.fromEntries((quizzes ?? []).map((q: any) => [q.id, q]));
+
+  return attempts.map((attempt: any) => ({
+    ...attempt,
+    quizzes: quizMap[attempt.quiz_id] ?? null,
+  }));
 }

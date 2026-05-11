@@ -15,8 +15,8 @@ interface ProgressInfo {
 
 export default function QuizList() {
   const { user } = useAuth();
-  const { data: quizzes = [], isLoading: loadingQuizzes } = useQuizzes();
-  const { data: courses = [], isLoading: loadingCourses } = useCourses();
+  const { data: quizzes = [], isLoading: loadingQuizzes, isError: quizError, error: quizErrorMsg } = useQuizzes();
+  const { data: courses = [], isLoading: loadingCourses, isError: courseError } = useCourses();
   const [progressMap, setProgressMap] = useState<Record<string, ProgressInfo>>({});
 
   useEffect(() => {
@@ -44,6 +44,7 @@ export default function QuizList() {
   }, [user, courses]);
 
   const isLoading = loadingQuizzes || loadingCourses;
+  const isError = quizError || courseError;
 
   return (
     <div className="space-y-8 pb-6">
@@ -54,6 +55,11 @@ export default function QuizList() {
 
       {isLoading ? (
         <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+      ) : isError ? (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-6 text-center">
+          <p className="text-sm font-semibold text-destructive">Failed to load quizzes</p>
+          <p className="text-xs text-muted-foreground mt-1">{(quizErrorMsg as any)?.message ?? "Please check your connection and try refreshing."}</p>
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {quizzes.map((quiz) => {

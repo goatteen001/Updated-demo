@@ -69,6 +69,7 @@ export function useQuizzes(options?: { skip?: boolean }) {
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     enabled: !options?.skip,
+    retry: 1, // surface errors quickly rather than retrying 3x (~30s spinner)
   });
 }
 
@@ -82,6 +83,7 @@ export function useQuiz(
     enabled: !!quizId && !options?.skip,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    retry: 1, // surface errors quickly rather than retrying 3x (~30s spinner)
   });
 }
 
